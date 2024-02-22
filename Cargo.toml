@@ -13,9 +13,14 @@ sqlx = { version = "0.7.3", features = [
     "postgres",
     "runtime-tokio",
     "sqlx-postgres",
+    "time",
 ] }
 tokio = { version = "1.36.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-bunyan-formatter = "0.3.9"
 tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3.18", features = ["registry", "env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = [
+    "registry",
+    "env-filter",
+] }
+time = { version = "0.3.30", features = ["macros", "serde", "formatting", "parsing"] }
