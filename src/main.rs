@@ -1,18 +1,50 @@
 use std::str::FromStr;
 
-use axum::{routing::get, Router};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{get, post},
+    Router,
+};
 use serde::{Deserialize, Serialize};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use time::PrimitiveDateTime;
-use tracing::subscriber::set_global_default;
-use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
-use tracing_log::LogTracer;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+use tokio::net::TcpListener;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use std::time::Duration;
+
+#[derive(Serialize, Deserialize)]
+struct Statement {
+    #[serde(rename = "extrato")]
+    balance: Balance,
+    #[serde(rename = "ultimas_transacoes")]
+    transactions: Vec<Transaction>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Balance {
+    #[serde(rename = "total")]
+    total: i64,
+    #[serde(rename = "limite")]
+    credit_limit: u64,
+    #[serde(rename = "data_extrato")]
+    balance_date: PrimitiveDateTime,
+}
 
 #[derive(Deserialize, Serialize)]
 struct PostTransaction {
     value: u64,
     kind: TransactionKind,
     description: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct TransactionResponse {
+    #[serde(rename = "saldo")]
+    balance: u64,
+    #[serde(rename = "limite")]
+    credit_limit: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -74,23 +106,82 @@ impl ToString for TransactionKind {
 
 #[tokio::main]
 async fn main() {
-    LogTracer::init().expect("Failed to set logger");
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-    let formatting_layer = BunyanFormattingLayer::new("rinha-rust".into(), std::io::stdout);
-    let subscriber = Registry::default()
-        .with(env_filter)
-        .with(JsonStorageLayer)
-        .with(formatting_layer);
-    set_global_default(subscriber).expect("Failed to set subscriber");
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "example_tokio_postgres=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    let app = Router::new().route("/", get(root));
+    let db_connection_str = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://rinha:rinha@localhost/rinha".to_string());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    // set up connection pool
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect(&db_connection_str)
+        .await
+        .expect("can't connect to database");
+
+    sqlx::migrate!().run(&pool).await.unwrap();
+
+    // build our application with some routes
+    let app = Router::new()
+        .route("/", get(hello_world))
+        // .route("/clientes/:id/extrato", get(statement))
+        .route("/clientes/:id/transacoes", post(insert_transaction))
+        .with_state(pool);
+
+    // run it with hyper
+    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
-// basic handler that responds with a static string
-async fn root() -> &'static str {
-    "Hello, World!"
+async fn hello_world() -> String {
+    "Hello, World!".to_string()
+}
+
+// async fn statement(
+//     Path(wallet_id): Path<i32>,
+//     State(pool): State<PgPool>,
+// ) -> Result<Statement, (StatusCode, String)> {
+//     sqlx::query_as!(
+//         Transaction,
+//         r#"
+//         SELECT value, kind, description, inserted_at
+//         FROM transactions
+//         WHERE wallet_id = $1
+//         "#,
+//         wallet_id
+//     )
+//     .fetch_all(&pool)
+//     .await
+//     .map_err(internal_error)?
+// }
+
+async fn insert_transaction(
+    Path(wallet_id): Path<i32>,
+    State(pool): State<PgPool>,
+) -> Result<TransactionResponse, (StatusCode, String)> {
+    sqlx::query_as!(
+        TransactionResponse,
+        r#"
+        INSERT INTO transactions (wallet_id, value, kind, description) VALUES ($1, $2, $3, $4);
+        UPDATE wallets SET balance = balance + $2 WHERE id = $1;
+        "#,
+        wallet_id, 100, "c", "test"
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(internal_error)?
+}
+
+fn internal_error<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }

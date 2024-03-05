@@ -1,14 +1,14 @@
 CREATE TABLE wallets (
   id SERIAL PRIMARY KEY,
   balance INT DEFAULT 0,
-  credit_limit INT DEFAULT 0,
+  credit_limit INT DEFAULT 0
 );
 
 CREATE TABLE transactions (
   id SERIAL PRIMARY KEY,
-  wallets INT REFERENCES wallets(id) NOT NULL,
+  wallet_id INT REFERENCES wallets(id) NOT NULL,
   value INT NOT NULL,
-  type VARCHAR(1) NOT NULL,
+  kind VARCHAR(1) NOT NULL,
   description VARCHAR(10) NOT NULL,
   inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

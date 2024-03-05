@@ -1,0 +1,1 @@
+ALTER TABLE "wallets" ADD CONSTRAINT "positive_balance" CHECK ("credit_limit" - "balance" >= 0);
