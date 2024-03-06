@@ -1,18 +1,17 @@
-use std::str::FromStr;
-
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use time::PrimitiveDateTime;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 #[derive(Serialize, Deserialize)]
 struct Statement {
@@ -34,8 +33,11 @@ struct Balance {
 
 #[derive(Deserialize, Serialize)]
 struct PostTransaction {
-    value: u64,
+    #[serde(rename = "valor")]
+    value: i32,
+    #[serde(rename = "tipo")]
     kind: TransactionKind,
+    #[serde(rename = "descricao")]
     description: String,
 }
 
@@ -59,29 +61,14 @@ struct Transaction {
     inserted_at: PrimitiveDateTime,
 }
 
+#[derive(Deserialize, Serialize)]
 enum TransactionKind {
+    #[serde(rename = "c")]
     Credit,
+    #[serde(rename = "d")]
     Debit,
 }
 
-impl Serialize for TransactionKind {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for TransactionKind {
-    fn deserialize<D>(deserializer: D) -> Result<TransactionKind, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        TransactionKind::from_str(&s).map_err(serde::de::Error::custom)
-    }
-}
 
 impl FromStr for TransactionKind {
     type Err = String;
@@ -165,18 +152,48 @@ async fn hello_world() -> String {
 async fn insert_transaction(
     Path(wallet_id): Path<i32>,
     State(pool): State<PgPool>,
-) -> Result<TransactionResponse, (StatusCode, String)> {
-    sqlx::query_as!(
-        TransactionResponse,
+    Json(post_transaction): Json<PostTransaction>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let mut transaction = pool.begin().await.map_err(internal_error)?;
+
+    let _ = sqlx::query!(
         r#"
         INSERT INTO transactions (wallet_id, value, kind, description) VALUES ($1, $2, $3, $4);
-        UPDATE wallets SET balance = balance + $2 WHERE id = $1;
         "#,
-        wallet_id, 100, "c", "test"
+        wallet_id,
+        post_transaction.value,
+        post_transaction.kind.to_string(),
+        post_transaction.description
     )
-    .fetch_one(&pool)
+    .execute(&mut *transaction)
     .await
-    .map_err(internal_error)?
+    .map_err(internal_error)?;
+
+
+    let updated_value = match post_transaction.kind {
+        TransactionKind::Credit => post_transaction.value,
+        TransactionKind::Debit => -post_transaction.value,
+    };
+
+    let res = sqlx::query!(
+        r#"
+        UPDATE wallets SET balance = balance + $1 WHERE id = $2 RETURNING balance, credit_limit;
+        "#,
+        updated_value,
+        wallet_id
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(internal_error)?;
+
+    transaction.commit().await.map_err(internal_error)?;
+
+    println!("{:?}", res);
+
+    Ok(Json(json!({
+        "saldo": res.balance,
+        "limite": res.credit_limit
+    })))
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
