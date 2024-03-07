@@ -6,30 +6,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::{PgPoolOptions, PgRow}, FromRow, PgPool, Row};
-use time::PrimitiveDateTime;
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use std::{str::FromStr, time::Duration};
-
-// #[derive(Serialize, Deserialize)]
-// struct Statement {
-//     #[serde(rename = "extrato")]
-//     balance: Balance,
-//     #[serde(rename = "ultimas_transacoes")]
-//     transactions: Vec<Transaction>,
-// }
-
-// #[derive(Serialize, Deserialize)]
-// struct Balance {
-//     #[serde(rename = "total")]
-//     total: i64,
-//     #[serde(rename = "limite")]
-//     credit_limit: u64,
-//     #[serde(rename = "data_extrato")]
-//     balance_date: PrimitiveDateTime,
-// }
 
 #[derive(Deserialize, Serialize)]
 struct PostTransaction {
@@ -41,14 +23,6 @@ struct PostTransaction {
     description: String,
 }
 
-// #[derive(Deserialize, Serialize)]
-// struct TransactionResponse {
-//     #[serde(rename = "saldo")]
-//     balance: u64,
-//     #[serde(rename = "limite")]
-//     credit_limit: u64,
-// }
-
 #[derive(sqlx::Type, Deserialize, Serialize, Debug)]
 struct Transaction {
     #[serde(rename = "valor")]
@@ -58,7 +32,7 @@ struct Transaction {
     #[serde(rename = "descricao")]
     description: String,
     #[serde(rename = "realizada_em")]
-    inserted_at: PrimitiveDateTime,
+    inserted_at: OffsetDateTime,
 }
 
 #[derive(sqlx::Type, Debug, Serialize, Deserialize)]
@@ -69,25 +43,6 @@ enum TransactionKind {
     #[serde(rename = "d")]
     Debit,
 }
-
-// impl Serialize for TransactionKind {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         serializer.serialize_str(&self.to_string())
-//     }
-// }
-
-// impl<'de> Deserialize<'de> for TransactionKind {
-//     fn deserialize<D>(deserializer: D) -> Result<TransactionKind, D::Error>
-//     where
-//         D: serde::Deserializer<'de>,
-//     {
-//         let s = String::deserialize(deserializer)?;
-//         TransactionKind::from_str(&s).map_err(serde::de::Error::custom)
-//     }
-// }
 
 impl FromStr for TransactionKind {
     type Err = String;
@@ -150,44 +105,78 @@ async fn hello_world() -> String {
     "Hello, World!".to_string()
 }
 
-impl<'r> FromRow<'r, PgRow> for Transaction {
-    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
-        println!("{:?}", "aaaa");
-        let foo: String = row.try_get("kind")?;
-        let kind: TransactionKind = foo.parse().unwrap();
-        println!("{:?}", kind);
+// async fn statement(
+//     State(pool): State<PgPool>,
+//     Path(wallet_id): Path<i32>,
+// ) -> Result<(), (StatusCode, String)> {
+//     let foo = sqlx::query!(
+//         r#"
+//         SELECT w.balance, w.credit_limit,
+//         ARRAY_AGG((t.value, t.kind, t.description, t.inserted_at)) as "transactions: Vec<Transaction>"
+//         FROM wallets w
+//         INNER JOIN transactions t ON w.id = t.wallet_id
+//         WHERE w.id = $1
+//         GROUP BY w.balance, w.credit_limit;
+//         "#,
+//         wallet_id
+//     )
+//     .fetch_one(&pool)
+//     .await
+//     .map_err(internal_error);
 
-        Ok(Transaction {
-            value: row.try_get("value")?,
-            kind: kind,
-            description: row.try_get("description")?,
-            inserted_at: row.try_get("inserted_at")?,
-        })
-    }
-}
+//     println!("{:?}", foo);
+
+//     Ok(())
+// }
 
 async fn statement(
     State(pool): State<PgPool>,
     Path(wallet_id): Path<i32>,
-) -> Result<(), (StatusCode, String)> {
-    let foo = sqlx::query!(
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let wallet = sqlx::query!(
         r#"
-        SELECT w.balance, w.credit_limit,
-        ARRAY_AGG((t.value, t.kind, t.description, t.inserted_at)) as "transactions: Vec<Transaction>" 
-        FROM wallets w
-        INNER JOIN transactions t ON w.id = t.wallet_id
-        WHERE w.id = $1
-        GROUP BY w.balance, w.credit_limit;
+        SELECT balance, credit_limit
+        FROM wallets
+        WHERE id = $1
         "#,
         wallet_id
     )
     .fetch_one(&pool)
     .await
-    .map_err(internal_error);
+    .map_err(internal_error)?;
 
-    println!("{:?}", foo);
+    let transactions = sqlx::query!(
+        r#"
+        SELECT value, kind as "kind: TransactionKind", description, inserted_at
+        FROM transactions
+        WHERE wallet_id = $1
+        ORDER BY inserted_at DESC
+        LIMIT 10;
+        "#,
+        wallet_id
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(internal_error)?;
 
-    Ok(())
+    let mut v = Vec::new();
+
+    for row in transactions {
+        v.push(json!({
+            "value": row.value,
+            "kind": row.kind,
+            "description": row.description,
+            "inserted_at": row.inserted_at.expect("error parsing date").format(&Rfc3339).unwrap(),
+        }));
+    }
+
+    Ok(Json(json!({
+        "saldo": wallet.balance,
+        "data_extrato": OffsetDateTime::now_utc().format(&Rfc3339).unwrap(),
+        "limite": wallet.credit_limit,
+        "ultimas_transacoes": v
+
+    })))
 }
 
 async fn insert_transaction(
@@ -202,7 +191,6 @@ async fn insert_transaction(
         TransactionKind::Debit => -post_transaction.value,
     };
 
-    println!("{:?}", "aaaa");
     let _ = sqlx::query!(
         r#"
         INSERT INTO transactions (wallet_id, value, kind, description) VALUES ($1, $2, $3, $4);
@@ -216,10 +204,6 @@ async fn insert_transaction(
     .await
     .map_err(internal_error)?;
 
-
-
-    println!("{:?}", updated_value);
-
     let res = sqlx::query!(
         r#"
         UPDATE wallets SET balance = balance + $1 WHERE id = $2 RETURNING balance, credit_limit;
@@ -232,8 +216,6 @@ async fn insert_transaction(
     .map_err(internal_error)?;
 
     transaction.commit().await.map_err(internal_error)?;
-
-    println!("{:?}", res);
 
     Ok(Json(json!({
         "saldo": res.balance,

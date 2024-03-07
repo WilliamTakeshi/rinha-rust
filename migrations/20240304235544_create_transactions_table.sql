@@ -12,7 +12,7 @@ CREATE TABLE transactions (
   value INT NOT NULL,
   kind transaction_kind NOT NULL,
   description VARCHAR(10) NOT NULL,
-  inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  inserted_at TIMESTAMP with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX transactions_wallet_id_index ON transactions (wallet_id);
