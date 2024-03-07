@@ -6,30 +6,30 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::{PgPoolOptions, PgRow}, FromRow, PgPool, Row};
 use time::PrimitiveDateTime;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use std::{str::FromStr, time::Duration};
 
-#[derive(Serialize, Deserialize)]
-struct Statement {
-    #[serde(rename = "extrato")]
-    balance: Balance,
-    #[serde(rename = "ultimas_transacoes")]
-    transactions: Vec<Transaction>,
-}
+// #[derive(Serialize, Deserialize)]
+// struct Statement {
+//     #[serde(rename = "extrato")]
+//     balance: Balance,
+//     #[serde(rename = "ultimas_transacoes")]
+//     transactions: Vec<Transaction>,
+// }
 
-#[derive(Serialize, Deserialize)]
-struct Balance {
-    #[serde(rename = "total")]
-    total: i64,
-    #[serde(rename = "limite")]
-    credit_limit: u64,
-    #[serde(rename = "data_extrato")]
-    balance_date: PrimitiveDateTime,
-}
+// #[derive(Serialize, Deserialize)]
+// struct Balance {
+//     #[serde(rename = "total")]
+//     total: i64,
+//     #[serde(rename = "limite")]
+//     credit_limit: u64,
+//     #[serde(rename = "data_extrato")]
+//     balance_date: PrimitiveDateTime,
+// }
 
 #[derive(Deserialize, Serialize)]
 struct PostTransaction {
@@ -41,18 +41,18 @@ struct PostTransaction {
     description: String,
 }
 
-#[derive(Deserialize, Serialize)]
-struct TransactionResponse {
-    #[serde(rename = "saldo")]
-    balance: u64,
-    #[serde(rename = "limite")]
-    credit_limit: u64,
-}
+// #[derive(Deserialize, Serialize)]
+// struct TransactionResponse {
+//     #[serde(rename = "saldo")]
+//     balance: u64,
+//     #[serde(rename = "limite")]
+//     credit_limit: u64,
+// }
 
-#[derive(Deserialize, Serialize)]
+#[derive(sqlx::Type, Deserialize, Serialize, Debug)]
 struct Transaction {
     #[serde(rename = "valor")]
-    value: u64,
+    value: i32,
     #[serde(rename = "tipo")]
     kind: TransactionKind,
     #[serde(rename = "descricao")]
@@ -61,7 +61,8 @@ struct Transaction {
     inserted_at: PrimitiveDateTime,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(sqlx::Type, Debug, Serialize, Deserialize)]
+#[sqlx(type_name = "transaction_kind", rename_all = "lowercase")]
 enum TransactionKind {
     #[serde(rename = "c")]
     Credit,
@@ -69,6 +70,24 @@ enum TransactionKind {
     Debit,
 }
 
+// impl Serialize for TransactionKind {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         serializer.serialize_str(&self.to_string())
+//     }
+// }
+
+// impl<'de> Deserialize<'de> for TransactionKind {
+//     fn deserialize<D>(deserializer: D) -> Result<TransactionKind, D::Error>
+//     where
+//         D: serde::Deserializer<'de>,
+//     {
+//         let s = String::deserialize(deserializer)?;
+//         TransactionKind::from_str(&s).map_err(serde::de::Error::custom)
+//     }
+// }
 
 impl FromStr for TransactionKind {
     type Err = String;
@@ -117,7 +136,7 @@ async fn main() {
     // build our application with some routes
     let app = Router::new()
         .route("/", get(hello_world))
-        // .route("/clientes/:id/extrato", get(statement))
+        .route("/clientes/:id/extrato", get(statement))
         .route("/clientes/:id/transacoes", post(insert_transaction))
         .with_state(pool);
 
@@ -131,23 +150,45 @@ async fn hello_world() -> String {
     "Hello, World!".to_string()
 }
 
-// async fn statement(
-//     Path(wallet_id): Path<i32>,
-//     State(pool): State<PgPool>,
-// ) -> Result<Statement, (StatusCode, String)> {
-//     sqlx::query_as!(
-//         Transaction,
-//         r#"
-//         SELECT value, kind, description, inserted_at
-//         FROM transactions
-//         WHERE wallet_id = $1
-//         "#,
-//         wallet_id
-//     )
-//     .fetch_all(&pool)
-//     .await
-//     .map_err(internal_error)?
-// }
+impl<'r> FromRow<'r, PgRow> for Transaction {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        println!("{:?}", "aaaa");
+        let foo: String = row.try_get("kind")?;
+        let kind: TransactionKind = foo.parse().unwrap();
+        println!("{:?}", kind);
+
+        Ok(Transaction {
+            value: row.try_get("value")?,
+            kind: kind,
+            description: row.try_get("description")?,
+            inserted_at: row.try_get("inserted_at")?,
+        })
+    }
+}
+
+async fn statement(
+    State(pool): State<PgPool>,
+    Path(wallet_id): Path<i32>,
+) -> Result<(), (StatusCode, String)> {
+    let foo = sqlx::query!(
+        r#"
+        SELECT w.balance, w.credit_limit,
+        ARRAY_AGG((t.value, t.kind, t.description, t.inserted_at)) as "transactions: Vec<Transaction>" 
+        FROM wallets w
+        INNER JOIN transactions t ON w.id = t.wallet_id
+        WHERE w.id = $1
+        GROUP BY w.balance, w.credit_limit;
+        "#,
+        wallet_id
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(internal_error);
+
+    println!("{:?}", foo);
+
+    Ok(())
+}
 
 async fn insert_transaction(
     Path(wallet_id): Path<i32>,
@@ -156,13 +197,19 @@ async fn insert_transaction(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let mut transaction = pool.begin().await.map_err(internal_error)?;
 
+    let updated_value = match &post_transaction.kind {
+        TransactionKind::Credit => post_transaction.value,
+        TransactionKind::Debit => -post_transaction.value,
+    };
+
+    println!("{:?}", "aaaa");
     let _ = sqlx::query!(
         r#"
         INSERT INTO transactions (wallet_id, value, kind, description) VALUES ($1, $2, $3, $4);
         "#,
         wallet_id,
         post_transaction.value,
-        post_transaction.kind.to_string(),
+        post_transaction.kind as _,
         post_transaction.description
     )
     .execute(&mut *transaction)
@@ -170,10 +217,8 @@ async fn insert_transaction(
     .map_err(internal_error)?;
 
 
-    let updated_value = match post_transaction.kind {
-        TransactionKind::Credit => post_transaction.value,
-        TransactionKind::Debit => -post_transaction.value,
-    };
+
+    println!("{:?}", updated_value);
 
     let res = sqlx::query!(
         r#"

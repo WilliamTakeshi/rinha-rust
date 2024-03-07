@@ -1,3 +1,5 @@
+CREATE TYPE transaction_kind AS ENUM ('credit', 'debit');
+
 CREATE TABLE wallets (
   id SERIAL PRIMARY KEY,
   balance INT DEFAULT 0,
@@ -8,7 +10,7 @@ CREATE TABLE transactions (
   id SERIAL PRIMARY KEY,
   wallet_id INT REFERENCES wallets(id) NOT NULL,
   value INT NOT NULL,
-  kind VARCHAR(1) NOT NULL,
+  kind transaction_kind NOT NULL,
   description VARCHAR(10) NOT NULL,
   inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -25,3 +27,5 @@ VALUES
   (3, 0, 1000000),
   (4, 0, 10000000),
   (5, 0, 500000);
+
+ALTER TABLE "wallets" ADD CONSTRAINT "positive_balance" CHECK ("credit_limit" + "balance" >= 0);
