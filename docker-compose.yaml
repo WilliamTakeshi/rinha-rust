@@ -16,8 +16,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.55"
-          memory: "200MB"
+          cpus: "0.4"
+          memory: "120MB"
 
   api02:
     <<: *api
@@ -37,8 +37,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
-          memory: "10MB"
+          cpus: "0.1"
+          memory: "20MB"
 
   postgres:
     container_name: rinha-rust-postgres
@@ -52,8 +52,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "140MB"
+          cpus: "0.6"
+          memory: "290MB"
 
 
 networks:
