@@ -2,9 +2,11 @@ version: "3.5"
 
 services:
   api01: &api
-    image: rinha
+    image: rinha:0.5
     hostname: api01
     environment:
+      - DATABASE_URL=postgres://rinha:rinha@postgres/rinha
+      - DB_HOSTNAME=postgres
       - DB_INITIAL_POOL_SIZE=13
       - DB_MAX_POOL_SIZE=13
       - API_USE_DB_FUNC=true
@@ -12,7 +14,7 @@ services:
     ports:
       - "3001:3000"
     depends_on:
-      - db
+      - postgres
     deploy:
       resources:
         limits:
@@ -49,6 +51,8 @@ services:
       POSTGRES_DB: rinha
     ports:
       - "5432:5432"
+    volumes:
+      - ./migrations/20240304235544_create_transactions_table.sql:/docker-entrypoint-initdb.d/init.sql
     deploy:
       resources:
         limits:

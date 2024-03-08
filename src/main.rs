@@ -86,7 +86,8 @@ async fn main() {
         .await
         .expect("can't connect to database");
 
-    sqlx::migrate!().run(&pool).await.unwrap();
+    // run migrations
+    // sqlx::migrate!().run(&pool).await.unwrap();
 
     // build our application with some routes
     let app = Router::new()
@@ -96,7 +97,7 @@ async fn main() {
         .with_state(pool);
 
     // run it with hyper
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
@@ -143,7 +144,7 @@ async fn statement(
     )
     .fetch_one(&pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(not_found)?;
 
     let transactions = sqlx::query!(
         r#"
@@ -157,23 +158,25 @@ async fn statement(
     )
     .fetch_all(&pool)
     .await
-    .map_err(internal_error)?;
+    .map_err(unprocessable_entity)?;
 
     let mut v = Vec::new();
 
     for row in transactions {
         v.push(json!({
-            "value": row.value,
-            "kind": row.kind,
-            "description": row.description,
-            "inserted_at": row.inserted_at.expect("error parsing date").format(&Rfc3339).unwrap(),
+            "valor": row.value,
+            "tipo": row.kind,
+            "descricao": row.description,
+            "realizada_em": row.inserted_at.expect("error parsing date").format(&Rfc3339).unwrap(),
         }));
     }
 
     Ok(Json(json!({
-        "saldo": wallet.balance,
-        "data_extrato": OffsetDateTime::now_utc().format(&Rfc3339).unwrap(),
-        "limite": wallet.credit_limit,
+        "saldo": {
+            "total": wallet.balance,
+            "data_extrato": OffsetDateTime::now_utc().format(&Rfc3339).unwrap(),
+            "limite": wallet.credit_limit
+        },
         "ultimas_transacoes": v
 
     })))
@@ -202,7 +205,7 @@ async fn insert_transaction(
     )
     .execute(&mut *transaction)
     .await
-    .map_err(internal_error)?;
+    .map_err(unprocessable_entity)?;
 
     let res = sqlx::query!(
         r#"
@@ -213,9 +216,9 @@ async fn insert_transaction(
     )
     .fetch_one(&mut *transaction)
     .await
-    .map_err(internal_error)?;
+    .map_err(unprocessable_entity)?;
 
-    transaction.commit().await.map_err(internal_error)?;
+    transaction.commit().await.map_err(unprocessable_entity)?;
 
     Ok(Json(json!({
         "saldo": res.balance,
@@ -228,4 +231,18 @@ where
     E: std::error::Error,
 {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+fn unprocessable_entity<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::UNPROCESSABLE_ENTITY, err.to_string())
+}
+
+fn not_found<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::NOT_FOUND, err.to_string())
 }

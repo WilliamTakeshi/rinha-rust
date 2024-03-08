@@ -11,7 +11,7 @@ CREATE TABLE transactions (
   wallet_id INT REFERENCES wallets(id) NOT NULL,
   value INT NOT NULL,
   kind transaction_kind NOT NULL,
-  description VARCHAR(10) NOT NULL,
+  description VARCHAR(10) NOT NULL CHECK (description <> ''),
   inserted_at TIMESTAMP with time zone DEFAULT CURRENT_TIMESTAMP
 );
 

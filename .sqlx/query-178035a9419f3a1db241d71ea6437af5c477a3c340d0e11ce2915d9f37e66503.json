@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT value, kind as \"kind: TransactionKind\", description, inserted_at\n        FROM transactions\n        WHERE wallet_id = $1\n        ORDER BY inserted_at DESC\n        LIMIT 10;\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "value",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "kind: TransactionKind",
+        "type_info": {
+          "Custom": {
+            "name": "transaction_kind",
+            "kind": {
+              "Enum": [
+                "credit",
+                "debit"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "inserted_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "178035a9419f3a1db241d71ea6437af5c477a3c340d0e11ce2915d9f37e66503"
+}

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wallets SET balance = balance + $1 WHERE id = $2 RETURNING balance, credit_limit;\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "balance",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "credit_limit",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "90172718b22cf2663b3439b643fa25a65f4197415dbb9c60c9e871ad1b5124a6"
+}
