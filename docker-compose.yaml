@@ -2,31 +2,38 @@ version: "3.5"
 
 services:
   api01: &api
-    image: rinha
+    image: williamtakeshi/rinha-rust:latest
     hostname: api01
+    network_mode: host
     environment:
-      - DB_INITIAL_POOL_SIZE=13
-      - DB_MAX_POOL_SIZE=13
+      - DATABASE_URL=postgres://rinha:rinha@127.0.0.1/rinha
+      - DB_HOSTNAME=postgres
+      - DB_INITIAL_POOL_SIZE=20
+      - DB_MAX_POOL_SIZE=100
       - API_USE_DB_FUNC=true
-      - PORT=3000
+      - PORT=3001
     ports:
-      - "3001:3000"
+      - "3001:3001"
     depends_on:
-      - db
+      - postgres
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "120MB"
+          cpus: "0.55"
+          memory: "200MB"
 
   api02:
     <<: *api
     hostname: api02
+    network_mode: host
+    environment:
+      - PORT=3002
     ports:
-      - "3002:3000"
+      - "3002:3002"
   
   nginx:
     image: nginx:latest
+    network_mode: host
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -37,26 +44,23 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: "20MB"
+          cpus: "0.15"
+          memory: "10MB"
 
   postgres:
     container_name: rinha-rust-postgres
     image: postgres:15
+    network_mode: host
     environment:
       POSTGRES_USER: rinha
       POSTGRES_PASSWORD: rinha
       POSTGRES_DB: rinha
     ports:
       - "5432:5432"
+    volumes:
+      - ./migrations/20240304235544_create_transactions_table.sql:/docker-entrypoint-initdb.d/init.sql
     deploy:
       resources:
         limits:
-          cpus: "0.6"
-          memory: "290MB"
-
-
-networks:
-  default:
-    driver: bridge
-    name: rinha-nginx-2024q1
+          cpus: "0.25"
+          memory: "140MB"

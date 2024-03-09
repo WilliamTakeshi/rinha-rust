@@ -96,8 +96,12 @@ async fn main() {
         .route("/clientes/:id/transacoes", post(insert_transaction))
         .with_state(pool);
 
+
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "3000".to_string());
+
     // run it with hyper
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await.unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
